@@ -14,7 +14,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "The Advanced Music Bot is active and running 24/7!"
+    return "The Fast Music Bot is active and running 24/7!"
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -25,23 +25,17 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# YTDLP CONFIGURATION (HIGH QUALITY)
+# YTDLP CONFIGURATION (OPTIMIZED FOR SPEED)
 # ==========================================
 ytdl_format_options = {
     'format': 'bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'opus',
-        'preferredquality': '192',
-    }],
-    'restrictfilenames': True,
-    'noplaylist': False,
+    'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
     'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
-    'default_search': 'auto',
+    'default_search': 'ytsearch1:',  # Fuerza a buscar directamente el primer resultado de YouTube de forma inmediata
     'source_address': '0.0.0.0',
 }
 
@@ -59,7 +53,7 @@ class Song:
     def __init__(self, data, requester):
         self.title = data.get('title', 'Unknown Title')
         self.url = data.get('url', '')
-        self.webpage_url = data.get('webpage_url', '')
+        self.webpage_url = data.get('webpage_url', data.get('id', ''))
         self.thumbnail = data.get('thumbnail', None)
         self.duration = data.get('duration', 0)
         self.requester = requester
@@ -79,7 +73,6 @@ class GuildMusicPlayer:
         self.channel = ctx.channel
         self.queue = asyncio.Queue()
         self.current = None
-        self.audio_player = None
         self.current_message = None
 
     async def player_loop(self):
@@ -89,7 +82,7 @@ class GuildMusicPlayer:
             self.current = None
             
             try:
-                # Esperar la siguiente canción con un timeout de 3 minutos (si no hay música, se sale solo)
+                # Esperar la siguiente canción (timeout de 3 minutos de inactividad)
                 self.current = await asyncio.wait_for(self.queue.get(), timeout=180.0)
             except asyncio.TimeoutError:
                 if self.guild.voice_client:
@@ -99,9 +92,11 @@ class GuildMusicPlayer:
                 break
 
             try:
-                # Extraer info fresca de la URL
+                # Extracción rápida del enlace de streaming de audio
                 loop = self.bot.loop
-                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(self.current.webpage_url or self.current.url, download=False))
+                target = self.current.webpage_url if self.current.webpage_url.startswith("http") else f"https://www.youtube.com/watch?v={self.current.webpage_url}"
+                
+                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(target, download=False))
                 
                 if 'entries' in data:
                     data = data['entries'][0]
@@ -131,7 +126,7 @@ class GuildMusicPlayer:
                 if self.channel:
                     await self.channel.send(f"❌ Ocurrió un error al reproducir la canción: {e}")
 
-            # Si la cola está vacía y no hay más canciones, esperar un momento antes de desconectar si nadie pone más
+            # Si la cola está vacía, desconectar tras un breve respiro
             if self.queue.empty():
                 await asyncio.sleep(1)
                 if self.queue.empty() and self.guild.voice_client and not self.guild.voice_client.is_playing():
@@ -141,9 +136,10 @@ class GuildMusicPlayer:
                     break
 
     def build_now_playing_embed(self):
+        link_target = self.current.webpage_url if self.current.webpage_url.startswith("http") else f"https://www.youtube.com/results?search_query={self.current.title}"
         embed = discord.Embed(
             title="🎶 Reproduciendo ahora",
-            description=f"**[{self.current.title}]({self.current.webpage_url})**",
+            description=f"**[{self.current.title}]({link_target})**",
             color=discord.Color.blurple()
         )
         if self.current.thumbnail:
@@ -152,17 +148,15 @@ class GuildMusicPlayer:
         embed.add_field(name="Duración", value=self.current.duration_str, inline=True)
         embed.add_field(name="Solicitado por", value=self.current.requester.mention, inline=True)
 
-        # Mostrar qué canción sigue en la cola
         if not self.queue.empty():
             next_song = list(self.queue._queue)[0]
-            embed.add_field(name="⏭️ Siguiente en la lista", value=f"[{next_song.title}]({next_song.webpage_url})", inline=False)
+            embed.add_field(name="⏭️ Siguiente en la lista", value=f"**{next_song.title}**", inline=False)
         else:
             embed.add_field(name="⏭️ Siguiente en la lista", value="*No hay más canciones en la cola.*", inline=False)
 
         embed.set_footer(text="Usa los botones de abajo para controlar la reproducción.")
         return embed
 
-# Diccionario para guardar el reproductor de cada servidor
 players = {}
 
 def get_player(ctx):
@@ -208,7 +202,6 @@ class MusicControlView(discord.ui.View):
         vc = interaction.guild.voice_client
         player = players.get(interaction.guild.id)
         if player:
-            # Vaciar cola
             while not player.queue.empty():
                 try:
                     player.queue.get_nowait()
@@ -233,12 +226,12 @@ class MusicBot(commands.Bot):
 
     async def setup_hook(self):
         await self.tree.sync()
-        print("🎵 Advanced Music Bot initialized and slash commands synchronized.")
+        print("⚡ Fast Music Bot initialized and slash commands synchronized.")
 
 bot = MusicBot()
 
-@bot.tree.command(name="play", description="Reproduce música de YouTube, crea cola automática y muestra portada")
-@app_commands.describe(search="Nombre de la canción o link de YouTube")
+@bot.tree.command(name="play", description="Reproduce música de YouTube de forma ultrarrápida y crea cola")
+@app_commands.describe(search="Nombre de la canción o link directo de YouTube")
 async def play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
         await interaction.response.send_message("❌ ¡Debes estar en un canal de voz para usar este comando!", ephemeral=True)
@@ -254,13 +247,13 @@ async def play(interaction: discord.Interaction, search: str):
     elif voice_client.channel != channel:
         await voice_client.move_to(channel)
 
-    # Obtener info de la canción
     try:
         loop = bot.loop
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
+        # Búsqueda ultra optimizada (ytsearch1 busca de inmediato el primer resultado sin escaneos lentos)
+        query = search if search.startswith("http") else f"ytsearch1:{search}"
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
         
         if 'entries' in data:
-            # Si es una playlist o búsqueda general, tomar el primer resultado
             song_data = data['entries'][0]
         else:
             song_data = data
@@ -270,12 +263,11 @@ async def play(interaction: discord.Interaction, search: str):
 
         await player.queue.put(song)
 
-        # Si no hay música sonando, iniciar el loop reproductor
         if not voice_client.is_playing() and not voice_client.is_paused():
             bot.loop.create_task(player.player_loop())
-            await interaction.followup.send(f"🎶 Añadido y reproduciendo: **{song.title}**")
+            await interaction.followup.send(f"⚡ Reproduciendo al instante: **{song.title}**")
         else:
-            await interaction.followup.send(f"➕ Añadido a la cola de reproducción: **{song.title}** (Posición #{player.queue.qsize()})")
+            await interaction.followup.send(f"➕ Añadido a la cola: **{song.title}** (Posición #{player.queue.qsize()})")
 
     except Exception as e:
         await interaction.followup.send(f"❌ Ocurrió un error al buscar la canción: {e}")
