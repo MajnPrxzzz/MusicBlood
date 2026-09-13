@@ -14,7 +14,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "The Fast Music Bot is active and running 24/7!"
+    return "The Lightning Music Bot is active!"
 
 def run():
     port = int(os.environ.get("PORT", 8080))
@@ -25,17 +25,17 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# YTDLP CONFIGURATION (OPTIMIZED FOR SPEED)
+# YTDLP CONFIGURATION (ULTRA FAST)
 # ==========================================
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'noplaylist': True,
     'nocheckcertificate': True,
-    'ignoreerrors': False,
+    'ignoreerrors': True,
     'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
-    'default_search': 'ytsearch1:',  # Fuerza a buscar directamente el primer resultado de YouTube de forma inmediata
+    'default_search': 'ytsearch1',
     'source_address': '0.0.0.0',
 }
 
@@ -52,13 +52,17 @@ ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 class Song:
     def __init__(self, data, requester):
         self.title = data.get('title', 'Unknown Title')
-        self.url = data.get('url', '')
-        self.webpage_url = data.get('webpage_url', data.get('id', ''))
+        # Si es una búsqueda plana, construimos el enlace web directo con el ID para evitar demoras
+        vid_id = data.get('id') or data.get('url', '')
+        if len(vid_id) == 11 and not vid_id.startswith('http'):
+            self.webpage_url = f"https://www.youtube.com/watch?v={vid_id}"
+        else:
+            self.webpage_url = data.get('webpage_url', vid_id)
+            
         self.thumbnail = data.get('thumbnail', None)
         self.duration = data.get('duration', 0)
         self.requester = requester
         
-        # Formatear duración (mm:ss)
         if self.duration:
             mins, secs = divmod(self.duration, 60)
             hours, mins = divmod(mins, 60)
@@ -82,7 +86,6 @@ class GuildMusicPlayer:
             self.current = None
             
             try:
-                # Esperar la siguiente canción (timeout de 3 minutos de inactividad)
                 self.current = await asyncio.wait_for(self.queue.get(), timeout=180.0)
             except asyncio.TimeoutError:
                 if self.guild.voice_client:
@@ -92,11 +95,9 @@ class GuildMusicPlayer:
                 break
 
             try:
-                # Extracción rápida del enlace de streaming de audio
                 loop = self.bot.loop
-                target = self.current.webpage_url if self.current.webpage_url.startswith("http") else f"https://www.youtube.com/watch?v={self.current.webpage_url}"
-                
-                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(target, download=False))
+                # Extracción rápida del flujo de audio real
+                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(self.current.webpage_url, download=False))
                 
                 if 'entries' in data:
                     data = data['entries'][0]
@@ -104,7 +105,6 @@ class GuildMusicPlayer:
                 playback_url = data['url']
                 source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(playback_url, **ffmpeg_options), volume=1.0)
                 
-                # Enviar Embed interactivo con controles
                 embed = self.build_now_playing_embed()
                 view = MusicControlView(self)
                 
@@ -116,7 +116,6 @@ class GuildMusicPlayer:
                 
                 self.current_message = await self.channel.send(embed=embed, view=view)
 
-                # Reproducir audio
                 event = asyncio.Event()
                 self.guild.voice_client.play(source, after=lambda e: event.set())
                 await event.wait()
@@ -126,7 +125,6 @@ class GuildMusicPlayer:
                 if self.channel:
                     await self.channel.send(f"❌ Ocurrió un error al reproducir la canción: {e}")
 
-            # Si la cola está vacía, desconectar tras un breve respiro
             if self.queue.empty():
                 await asyncio.sleep(1)
                 if self.queue.empty() and self.guild.voice_client and not self.guild.voice_client.is_playing():
@@ -136,10 +134,9 @@ class GuildMusicPlayer:
                     break
 
     def build_now_playing_embed(self):
-        link_target = self.current.webpage_url if self.current.webpage_url.startswith("http") else f"https://www.youtube.com/results?search_query={self.current.title}"
         embed = discord.Embed(
             title="🎶 Reproduciendo ahora",
-            description=f"**[{self.current.title}]({link_target})**",
+            description=f"**[{self.current.title}]({self.current.webpage_url})**",
             color=discord.Color.blurple()
         )
         if self.current.thumbnail:
@@ -226,11 +223,11 @@ class MusicBot(commands.Bot):
 
     async def setup_hook(self):
         await self.tree.sync()
-        print("⚡ Fast Music Bot initialized and slash commands synchronized.")
+        print("⚡ Lightning Fast Music Bot initialized.")
 
 bot = MusicBot()
 
-@bot.tree.command(name="play", description="Reproduce música de YouTube de forma ultrarrápida y crea cola")
+@bot.tree.command(name="play", description="Reproduce música al instante de YouTube y crea cola")
 @app_commands.describe(search="Nombre de la canción o link directo de YouTube")
 async def play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
@@ -249,14 +246,19 @@ async def play(interaction: discord.Interaction, search: str):
 
     try:
         loop = bot.loop
-        # Búsqueda ultra optimizada (ytsearch1 busca de inmediato el primer resultado sin escaneos lentos)
-        query = search if search.startswith("http") else f"ytsearch1:{search}"
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
         
-        if 'entries' in data:
-            song_data = data['entries'][0]
+        # Extracción ultrarrápida preliminar (solo metadatos ligeros del primer resultado)
+        query = search if search.startswith("http") else f"ytsearch1:{search}"
+        
+        partial_data = await loop.run_in_executor(
+            None, 
+            lambda: ytdl.extract_info(query, download=False, process=False)
+        )
+        
+        if 'entries' in partial_data:
+            song_data = partial_data['entries'][0]
         else:
-            song_data = data
+            song_data = partial_data
 
         song = Song(song_data, interaction.user)
         player = get_player(interaction)
